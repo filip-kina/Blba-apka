@@ -1,0 +1,1089 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <!-- PWA a Apple iOS Mobile tagy pro uložení na plochu -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Blbá aplikace">
+    <meta name="theme-color" content="#000000">
+    <meta name="description" content="Blbá aplikace – minimalistický tracker zodpovědné konzumace">
+    
+    <title>Blbá aplikace</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Google Fonts (Raleway) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Raleway:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        body, button, input, select {
+            font-family: 'Raleway', -apple-system, BlinkMacSystemFont, sans-serif;
+            font-variant-numeric: lining-nums tabular-nums;
+        }
+
+        body {
+            background-color: #000000;
+            color: #ffffff;
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: pan-y;
+            overscroll-behavior-y: none;
+        }
+
+        /* Skrytí scrollbaru pro čistý nativní vzhled */
+        ::-webkit-scrollbar {
+            display: none;
+        }
+
+        /* Hmatová animace dlaždic */
+        .tile {
+            transition: transform 0.14s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.14s, border-color 0.14s;
+        }
+        .tile:active {
+            transform: scale(0.93);
+            background-color: #27272a;
+        }
+        
+        .danger-tile:active {
+            transform: scale(0.93);
+            background-color: rgba(127, 29, 29, 0.28);
+        }
+
+        /* Plynulé plnění denní nádoby */
+        .progress-bar-fill {
+            transition: width 0.5s cubic-bezier(0.34, 1.56, 0.64, 1), background-color 0.3s ease;
+        }
+
+        /* Animace vyskakovacích hlášek */
+        @keyframes toastIn {
+            from { opacity: 0; transform: translateY(-16px) scale(0.96); }
+            to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        @keyframes toastOut {
+            from { opacity: 1; transform: translateY(0) scale(1); }
+            to { opacity: 0; transform: translateY(-10px) scale(0.96); }
+        }
+        .toast-enter {
+            animation: toastIn 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+        .toast-exit {
+            animation: toastOut 0.25s ease-in forwards;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col relative pb-28">
+
+    <!-- Kontejner pro chytré vyskakovací hlášky (Toasts) -->
+    <div id="toast-container" class="fixed top-[max(8rem,calc(env(safe-area-inset-top)+6.8rem))] left-4 right-4 z-50 flex flex-col items-center gap-2 pointer-events-none"></div>
+
+    <!-- Fixní horní lišta: Název + Denní nádoba + Fyzio profil -->
+    <header class="fixed top-0 left-0 right-0 bg-black/85 backdrop-blur-xl z-40 border-b border-zinc-900 pt-[max(2.25rem,env(safe-area-inset-top))] pb-3.5 px-4">
+        <div class="max-w-md mx-auto">
+            <!-- Název aplikace a aktuální logický den -->
+            <div class="flex items-center justify-between mb-2.5">
+                <h1 class="text-lg font-extrabold tracking-tight text-white">Blbá aplikace</h1>
+                <span id="logical-date-label" class="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider"></span>
+            </div>
+
+            <!-- Řádek: Profil a počet drinků -->
+            <div class="flex justify-between items-center mb-2.5">
+                <button id="btn-open-profile" class="flex items-center gap-2 bg-zinc-900 hover:bg-zinc-800 active:scale-95 transition-all border border-zinc-800 rounded-full px-3 py-1.5 text-xs text-zinc-300">
+                    <i data-lucide="user" class="w-3.5 h-3.5 text-white"></i>
+                    <span id="profile-summary-badge" class="font-semibold">66 kg • Normální</span>
+                </button>
+
+                <div class="flex items-center gap-2">
+                    <button id="btn-undo" class="hidden items-center gap-1 bg-zinc-900 active:scale-90 transition-transform border border-zinc-800 rounded-full px-2.5 py-1 text-[11px] font-medium text-zinc-400" title="Odebrat poslední záznam">
+                        <i data-lucide="undo-2" class="w-3 h-3"></i>
+                        <span>Zpět</span>
+                    </button>
+                    <div class="flex items-baseline gap-1">
+                        <span id="daily-count" class="text-xl font-bold text-white">0</span>
+                        <span class="text-xs font-medium text-zinc-500">drinků</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Vizuální Denní nádoba -->
+            <div class="h-3.5 w-full bg-zinc-900 rounded-full overflow-hidden border border-zinc-800 relative">
+                <!-- Orientační ryska rozumného limitu (5 drinků) -->
+                <div class="absolute top-0 bottom-0 left-[50%] w-px bg-zinc-700/70 z-20" title="Rozumný strop"></div>
+                <div id="daily-progress" class="progress-bar-fill h-full bg-white rounded-full relative z-10" style="width: 0%;"></div>
+            </div>
+
+            <div class="flex justify-between items-center mt-1.5">
+                <span class="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Denní nádoba</span>
+                <span class="text-[10px] font-medium text-zinc-600 uppercase tracking-wider">Strop 5 drinků</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Hlavní obsah: Minimalistické dlaždice -->
+    <main class="flex-grow max-w-md mx-auto w-full px-4 pt-[max(11rem,calc(env(safe-area-inset-top)+9rem))]">
+        
+        <!-- Mřížka alkoholických nápojů -->
+        <div class="grid grid-cols-2 gap-3.5">
+            <!-- Malé pivo -->
+            <button class="tile track-btn relative bg-zinc-900 border border-zinc-800 rounded-3xl flex flex-col items-center justify-center p-4 h-28" data-type="male_pivo" data-category="alcohol">
+                <span id="badge-male_pivo" class="hidden absolute top-3 right-3 min-w-[22px] h-[22px] px-1.5 rounded-full bg-white text-black text-xs font-bold items-center justify-center">0</span>
+                <i data-lucide="beer" class="text-white w-6 h-6 mb-2.5 stroke-[1.75]"></i>
+                <span class="text-zinc-200 text-sm font-semibold">Malé pivo</span>
+            </button>
+
+            <!-- Velké pivo -->
+            <button class="tile track-btn relative bg-zinc-900 border border-zinc-800 rounded-3xl flex flex-col items-center justify-center p-4 h-28" data-type="velke_pivo" data-category="alcohol">
+                <span id="badge-velke_pivo" class="hidden absolute top-3 right-3 min-w-[22px] h-[22px] px-1.5 rounded-full bg-white text-black text-xs font-bold items-center justify-center">0</span>
+                <i data-lucide="beer" class="text-white w-8 h-8 mb-2.5 stroke-[1.75]"></i>
+                <span class="text-zinc-200 text-sm font-semibold">Velké pivo</span>
+            </button>
+            
+            <!-- 0,1l Bílé víno -->
+            <button class="tile track-btn relative bg-zinc-900 border border-zinc-800 rounded-3xl flex flex-col items-center justify-center p-4 h-28" data-type="vino_bile" data-category="alcohol">
+                <span id="badge-vino_bile" class="hidden absolute top-3 right-3 min-w-[22px] h-[22px] px-1.5 rounded-full bg-white text-black text-xs font-bold items-center justify-center">0</span>
+                <i data-lucide="wine" class="text-white w-7 h-7 mb-2.5 stroke-[1.5]"></i>
+                <span class="text-zinc-200 text-sm font-semibold">0,1l Bílé víno</span>
+            </button>
+
+            <!-- 0,1l Červené víno -->
+            <button class="tile track-btn relative bg-zinc-900 border border-zinc-800 rounded-3xl flex flex-col items-center justify-center p-4 h-28" data-type="vino_cervene" data-category="alcohol">
+                <span id="badge-vino_cervene" class="hidden absolute top-3 right-3 min-w-[22px] h-[22px] px-1.5 rounded-full bg-white text-black text-xs font-bold items-center justify-center">0</span>
+                <i data-lucide="wine" class="text-white w-7 h-7 mb-2.5 stroke-[2.25]"></i>
+                <span class="text-zinc-200 text-sm font-semibold">0,1l Červené víno</span>
+            </button>
+
+            <!-- Koktejl -->
+            <button class="tile track-btn relative bg-zinc-900 border border-zinc-800 rounded-3xl flex flex-col items-center justify-center p-4 h-28" data-type="koktejl" data-category="alcohol">
+                <span id="badge-koktejl" class="hidden absolute top-3 right-3 min-w-[22px] h-[22px] px-1.5 rounded-full bg-white text-black text-xs font-bold items-center justify-center">0</span>
+                <i data-lucide="martini" class="text-white w-7 h-7 mb-2.5 stroke-[1.75]"></i>
+                <span class="text-zinc-200 text-sm font-semibold">Koktejl</span>
+            </button>
+
+            <!-- Svařák -->
+            <button class="tile track-btn relative bg-zinc-900 border border-zinc-800 rounded-3xl flex flex-col items-center justify-center p-4 h-28" data-type="svarak" data-category="alcohol">
+                <span id="badge-svarak" class="hidden absolute top-3 right-3 min-w-[22px] h-[22px] px-1.5 rounded-full bg-white text-black text-xs font-bold items-center justify-center">0</span>
+                <i data-lucide="cup-soda" class="text-white w-7 h-7 mb-2.5 stroke-[1.75]"></i>
+                <span class="text-zinc-200 text-sm font-semibold">Svařák</span>
+            </button>
+
+            <!-- Malý panák -->
+            <button class="tile track-btn relative bg-zinc-900 border border-zinc-800 rounded-3xl flex flex-col items-center justify-center p-4 h-28" data-type="maly_panak" data-category="alcohol">
+                <span id="badge-maly_panak" class="hidden absolute top-3 right-3 min-w-[22px] h-[22px] px-1.5 rounded-full bg-white text-black text-xs font-bold items-center justify-center">0</span>
+                <i data-lucide="glass-water" class="text-white w-5 h-5 mb-2.5 stroke-[1.75]"></i>
+                <span class="text-zinc-200 text-sm font-semibold">Malý panák</span>
+            </button>
+
+            <!-- Velký panák -->
+            <button class="tile track-btn relative bg-zinc-900 border border-zinc-800 rounded-3xl flex flex-col items-center justify-center p-4 h-28" data-type="velky_panak" data-category="alcohol">
+                <span id="badge-velky_panak" class="hidden absolute top-3 right-3 min-w-[22px] h-[22px] px-1.5 rounded-full bg-white text-black text-xs font-bold items-center justify-center">0</span>
+                <i data-lucide="glass-water" class="text-white w-7 h-7 mb-2.5 stroke-[1.75]"></i>
+                <span class="text-zinc-200 text-sm font-semibold">Velký panák</span>
+            </button>
+        </div>
+
+        <!-- Danger Zone (Pod čarou: Cigarety) -->
+        <div class="mt-7 mb-5 flex items-center w-full">
+            <div class="flex-grow border-t border-red-950"></div>
+            <span class="px-3 text-[10px] font-bold tracking-widest text-red-500/90 uppercase flex items-center gap-1.5">
+                <i data-lucide="triangle-alert" class="w-3 h-3"></i> Danger Zone • Ideálně nekouřit
+            </span>
+            <div class="flex-grow border-t border-red-950"></div>
+        </div>
+
+        <div class="flex justify-center mb-6">
+            <button class="danger-tile tile track-btn relative w-full max-w-[52%] bg-[#0c0202] border border-red-900/50 rounded-3xl flex flex-col items-center justify-center p-4 h-28" data-type="cigareta" data-category="danger">
+                <span id="badge-cigareta" class="hidden absolute top-3 right-3 min-w-[22px] h-[22px] px-1.5 rounded-full bg-red-500 text-white text-xs font-bold items-center justify-center">0</span>
+                <i data-lucide="cigarette" class="text-red-500 w-8 h-8 mb-2.5 stroke-[1.75]"></i>
+                <span class="text-red-400 text-sm font-semibold">Cigareta</span>
+            </button>
+        </div>
+
+    </main>
+
+    <!-- Plovoucí tlačítko Záchranný kruh -->
+    <button id="btn-open-lifebuoy" aria-label="Záchranný kruh" class="fixed bottom-[max(6rem,calc(env(safe-area-inset-bottom)+5rem))] right-5 w-14 h-14 rounded-full bg-amber-500 text-black shadow-[0_8px_25px_rgba(245,158,11,0.35)] flex items-center justify-center z-40 active:scale-90 transition-transform">
+        <i data-lucide="life-buoy" class="w-7 h-7 stroke-[2.2]"></i>
+    </button>
+
+    <!-- Fixní spodní lišta: Statistiky -->
+    <footer class="fixed bottom-0 left-0 right-0 bg-black/90 backdrop-blur-xl border-t border-zinc-900 px-4 pt-3 pb-[max(1.25rem,env(safe-area-inset-bottom))] z-30">
+        <div class="max-w-md mx-auto">
+            <button id="btn-open-stats" class="w-full bg-white text-black font-bold rounded-2xl py-3.5 flex items-center justify-center gap-2 transition-transform active:scale-95">
+                <i data-lucide="bar-chart-3" class="w-5 h-5"></i>
+                <span>Statistiky</span>
+            </button>
+        </div>
+    </footer>
+
+    <!-- ===================================================================== -->
+    <!-- MODÁL 1: ZÁCHRANNÝ KRUH (Riziko nevolnosti & Plán záchrany)            -->
+    <!-- ===================================================================== -->
+    <div id="lifebuoy-modal" class="fixed inset-0 bg-black/80 backdrop-blur-md z-50 opacity-0 pointer-events-none transition-opacity duration-200 flex items-end justify-center">
+        <div id="lifebuoy-sheet" class="bg-zinc-950 border-t border-zinc-800 w-full max-w-md rounded-t-3xl p-6 pb-[max(2rem,env(safe-area-inset-bottom))] transform translate-y-full transition-transform duration-300 ease-out max-h-[88vh] overflow-y-auto">
+            
+            <!-- Hlavička -->
+            <div class="flex justify-between items-center mb-5">
+                <div class="flex items-center gap-2.5">
+                    <div class="w-9 h-9 rounded-full bg-amber-500/15 border border-amber-500/30 flex items-center justify-center">
+                        <i data-lucide="life-buoy" class="w-5 h-5 text-amber-400"></i>
+                    </div>
+                    <div>
+                        <h2 class="text-lg font-bold text-white leading-tight">Záchranný kruh</h2>
+                        <p class="text-xs text-zinc-400">Aktuální odhad a plán pro dobrý zítřek</p>
+                    </div>
+                </div>
+                <button id="btn-close-lifebuoy" class="p-2 bg-zinc-900 rounded-full text-zinc-400 active:scale-90">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+
+            <!-- Hlavní ukazatel: Pravděpodobnost, že ti bude blbě -->
+            <div class="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 mb-4">
+                <div class="flex justify-between items-start mb-2">
+                    <span class="text-xs font-semibold uppercase tracking-wider text-zinc-400">Pravděpodobnost, že ti bude blbě</span>
+                    <span id="sick-status-pill" class="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400">V normě</span>
+                </div>
+                <div class="flex items-baseline gap-3 my-1">
+                    <span id="pred-overall-sick" class="text-4xl font-extrabold text-white">0 %</span>
+                </div>
+                <p id="pred-summary-text" class="text-xs text-zinc-400 mt-1.5 leading-relaxed">
+                    Zatím jsi v naprostém klidu. Drž si tempo a prokládej to vodou.
+                </p>
+
+                <!-- Rozpad jednotlivých rizik -->
+                <div class="grid grid-cols-3 gap-2.5 mt-4 pt-3.5 border-t border-zinc-800/80">
+                    <div class="bg-zinc-950/70 rounded-xl p-2.5 text-center border border-zinc-800/60">
+                        <div class="text-[11px] font-medium text-zinc-400 mb-1">Bolest hlavy</div>
+                        <div id="pred-headache" class="text-base font-bold text-white">0 %</div>
+                    </div>
+                    <div class="bg-zinc-950/70 rounded-xl p-2.5 text-center border border-zinc-800/60">
+                        <div class="text-[11px] font-medium text-zinc-400 mb-1">Nevolnost</div>
+                        <div id="pred-vomit" class="text-base font-bold text-white">0 %</div>
+                    </div>
+                    <div class="bg-zinc-950/70 rounded-xl p-2.5 text-center border border-zinc-800/60">
+                        <div class="text-[11px] font-medium text-zinc-400 mb-1">Únava</div>
+                        <div id="pred-fatigue" class="text-base font-bold text-white">0 %</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Akční plán: Co dělat, aby mi bylo dobře -->
+            <div class="mb-2">
+                <h3 class="text-xs font-bold uppercase tracking-wider text-zinc-400 mb-3">Co teď udělat, aby ti bylo dobře</h3>
+                
+                <!-- Karta hydratace + interaktivní odpočet vypité vody -->
+                <div class="bg-blue-950/25 border border-blue-800/40 rounded-2xl p-4 mb-3">
+                    <div class="flex items-center justify-between gap-3">
+                        <div class="flex items-start gap-3">
+                            <div class="p-2 rounded-xl bg-blue-500/15 text-blue-400 mt-0.5">
+                                <i data-lucide="droplets" class="w-5 h-5"></i>
+                            </div>
+                            <div>
+                                <div class="text-xs text-blue-300 font-semibold">Vypít před spaním</div>
+                                <div id="pred-water" class="text-2xl font-bold text-white mt-0.5">500 ml vody</div>
+                                <div id="water-logged-note" class="text-[11px] text-blue-300/70 mt-0.5">Zatím zapsáno 0 ml vody</div>
+                            </div>
+                        </div>
+                        <button id="btn-drink-water" class="shrink-0 bg-blue-500/20 hover:bg-blue-500/30 active:scale-95 transition-all border border-blue-400/30 text-blue-200 text-xs font-bold px-3 py-2.5 rounded-xl">
+                            + 250 ml
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Dynamický seznam doporučení podle aktuální konzumace -->
+                <div id="rescue-actions-list" class="space-y-2.5">
+                    <!-- Vyplní JS -->
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- ===================================================================== -->
+    <!-- MODÁL 2: FYZIO PROFIL & STUPEŇ NAJEZENÍ                               -->
+    <!-- ===================================================================== -->
+    <div id="profile-modal" class="fixed inset-0 bg-black/80 backdrop-blur-md z-50 opacity-0 pointer-events-none transition-opacity duration-200 flex items-end justify-center">
+        <div id="profile-sheet" class="bg-zinc-950 border-t border-zinc-800 w-full max-w-md rounded-t-3xl p-6 pb-[max(2rem,env(safe-area-inset-bottom))] transform translate-y-full transition-transform duration-300 ease-out max-h-[88vh] overflow-y-auto">
+            
+            <div class="flex justify-between items-center mb-5">
+                <div>
+                    <h2 class="text-lg font-bold text-white">Tvůj profil & najezení</h2>
+                    <p class="text-xs text-zinc-400">Ovlivňuje vstřebávání a odhad zítřejšího stavu</p>
+                </div>
+                <button id="btn-close-profile" class="p-2 bg-zinc-900 rounded-full text-zinc-400 active:scale-90">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-1.5">Stupeň najezení před začátkem pití</label>
+                    <select id="prof-food" class="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3.5 py-3 text-white text-sm font-semibold focus:outline-none focus:border-white">
+                        <option value="velmi_malo">Velmi málo (prázdný žaludek)</option>
+                        <option value="malo">Málo (jen něco drobného)</option>
+                        <option value="normalni">Normální (běžné jídlo)</option>
+                        <option value="docela_dobry">Docela dobrý (sytější jídlo)</option>
+                        <option value="dosyta">Dosyta (pořádný základ)</option>
+                    </select>
+                </div>
+
+                <div class="grid grid-cols-3 gap-3">
+                    <div>
+                        <label class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-1.5">Věk (let)</label>
+                        <input type="number" id="prof-age" min="18" max="110" class="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-3 text-white text-sm font-semibold text-center focus:outline-none focus:border-white">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-1.5">Váha (kg)</label>
+                        <input type="number" id="prof-weight" min="35" max="250" class="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-3 text-white text-sm font-semibold text-center focus:outline-none focus:border-white">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-1.5">Výška (cm)</label>
+                        <input type="number" id="prof-height" min="120" max="230" class="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-3 text-white text-sm font-semibold text-center focus:outline-none focus:border-white">
+                    </div>
+                </div>
+
+                <button id="btn-save-profile" class="w-full bg-white text-black font-bold rounded-2xl py-3.5 mt-2 active:scale-95 transition-transform">
+                    Uložit nastavení
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===================================================================== -->
+    <!-- MODÁL 3: STATISTIKY (Graf spotřeby napříč časem)                      -->
+    <!-- ===================================================================== -->
+    <div id="stats-modal" class="fixed inset-0 bg-black z-50 transform translate-y-full transition-transform duration-300 ease-in-out flex flex-col">
+        <!-- Hlavička -->
+        <div class="flex justify-between items-center px-6 pt-[max(3rem,env(safe-area-inset-top))] pb-4 border-b border-zinc-900">
+            <h2 class="text-xl font-bold text-white">Přehled spotřeby</h2>
+            <button id="btn-close-stats" class="p-2 bg-zinc-900 rounded-full active:scale-90 transition-transform">
+                <i data-lucide="x" class="w-5 h-5 text-zinc-400"></i>
+            </button>
+        </div>
+
+        <!-- Obsah statistik -->
+        <div class="p-6 flex-grow flex flex-col max-w-md mx-auto w-full overflow-y-auto">
+            <!-- Přepínač po týdnech / po měsících -->
+            <div class="flex bg-zinc-900 border border-zinc-800 rounded-xl p-1 mb-6">
+                <button id="btn-view-weeks" class="flex-1 py-2 text-sm font-semibold rounded-lg bg-zinc-700 text-white shadow-sm transition-colors">Po týdnech</button>
+                <button id="btn-view-months" class="flex-1 py-2 text-sm font-semibold rounded-lg text-zinc-400 hover:text-white transition-colors">Po měsících</button>
+            </div>
+
+            <!-- Kontejner spojnicového grafu -->
+            <div class="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 w-full h-72">
+                <canvas id="statsChart"></canvas>
+            </div>
+            
+            <p class="text-xs text-zinc-500 mt-4 text-center">
+                Graf počítá alkoholické drinky z Denní nádoby (alkoholický den 05:00 – 05:00).
+            </p>
+
+            <!-- Bezpečný reset dnešního dne (dvoukrokový, bez nativního confirm) -->
+            <div class="mt-auto pt-8">
+                <button id="btn-reset-today-prompt" class="w-full py-3 rounded-xl border border-zinc-800 text-zinc-500 text-xs font-semibold hover:text-zinc-300 transition-colors">
+                    Vynulovat dnešní den
+                </button>
+                <div id="reset-confirm-box" class="hidden bg-zinc-900 border border-red-900/50 rounded-2xl p-4 mt-2 text-center">
+                    <p class="text-xs text-zinc-300 mb-3">Opravdu smazat všechny záznamy z dnešního logického dne?</p>
+                    <div class="flex gap-2">
+                        <button id="btn-reset-cancel" class="flex-1 py-2 rounded-xl bg-zinc-800 text-zinc-300 text-xs font-bold">Zrušit</button>
+                        <button id="btn-reset-confirm" class="flex-1 py-2 rounded-xl bg-red-600 text-white text-xs font-bold">Smazat dnešek</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===================================================================== -->
+    <!-- APLIKAČNÍ LOGIKA                                                      -->
+    <!-- ===================================================================== -->
+    <script>
+        // Inicializace vektorových ikon Lucide
+        lucide.createIcons();
+
+        // Nastavení fontu Raleway pro Chart.js
+        if (window.Chart) {
+            Chart.defaults.font.family = "'Raleway', -apple-system, BlinkMacSystemFont, sans-serif";
+        }
+
+        // Orientační obsah čistého ethanolu v gramech na 1 porci
+        const DRINK_ETHANOL_G = {
+            male_pivo: 12,      // 0,3 l (5 %)
+            velke_pivo: 20,     // 0,5 l (5 %)
+            vino_bile: 9.6,     // 0,1 l (12 %)
+            vino_cervene: 10.4, // 0,1 l (13 %)
+            koktejl: 18,        // Průměrný míchaný drink
+            svarak: 16,         // 0,2 l (10 % + cukr)
+            maly_panak: 6.4,    // 0,02 l (40 %)
+            velky_panak: 12.8,  // 0,04 l (40 %)
+            cigareta: 0
+        };
+
+        const FOOD_LABELS = {
+            velmi_malo: 'Velmi málo',
+            malo: 'Málo',
+            normalni: 'Normální',
+            docela_dobry: 'Docela dobrý',
+            dosyta: 'Dosyta'
+        };
+
+        // Multiplikátor rizika podle stupně najezení
+        const FOOD_RISK_MULTIPLIER = {
+            velmi_malo: 1.32,
+            malo: 1.15,
+            normalni: 1.0,
+            docela_dobry: 0.85,
+            dosyta: 0.72
+        };
+
+        // Výchozí profil: 35 let, 66 kg, 176 cm, normálně najezený
+        const DEFAULT_PROFILE = {
+            age: 35,
+            weight: 66,
+            height: 176,
+            food: 'normalni'
+        };
+
+        const SOFT_DRINK_LIMIT = 10; // Vizuální kapacita Denní nádoby
+
+        // Načtení uložených dat z localStorage
+        let records = JSON.parse(localStorage.getItem('consumptionRecords')) || [];
+        let profile = Object.assign({}, DEFAULT_PROFILE, JSON.parse(localStorage.getItem('userDrinkProfile')) || {});
+        let waterLogs = JSON.parse(localStorage.getItem('waterLogsByDay')) || {};
+        
+        let currentChartPeriod = 'week';
+        let chartInstance = null;
+
+        // --- ČASOVÁ LOGIKA (Alkoholický den 05:00 -> 05:00 dalšího dne) ---
+        function getLogicalDateString(timestamp) {
+            const d = new Date(timestamp - 5 * 3600 * 1000);
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        }
+
+        function getWeekString(logicalDateStr) {
+            const d = new Date(logicalDateStr);
+            d.setUTCHours(0, 0, 0, 0);
+            d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
+            const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+            const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+            return `${d.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`;
+        }
+
+        function getMonthString(logicalDateStr) {
+            return logicalDateStr.substring(0, 7);
+        }
+
+        // --- NOTIFIKAČNÍ HLÁŠKY (TOASTS) ---
+        function showToast(message, isWarning = false) {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = `toast-enter px-4 py-3 rounded-2xl text-xs sm:text-sm font-bold shadow-2xl border max-w-sm text-center backdrop-blur-xl ${
+                isWarning 
+                ? 'bg-red-950/95 text-red-100 border-red-800' 
+                : 'bg-white/95 text-black border-zinc-200'
+            }`;
+            toast.textContent = message;
+            container.appendChild(toast);
+
+            if (navigator.vibrate) {
+                navigator.vibrate(isWarning ? [80, 40, 80] : [50, 30, 50]);
+            }
+
+            setTimeout(() => {
+                toast.classList.remove('toast-enter');
+                toast.classList.add('toast-exit');
+                setTimeout(() => toast.remove(), 260);
+            }, 3800);
+        }
+
+        // --- ZÁZNAM KONZUMACE & POČÍTADLA ---
+        function getTodayRecords() {
+            const todayLogical = getLogicalDateString(Date.now());
+            return records.filter(r => getLogicalDateString(r.timestamp) === todayLogical);
+        }
+
+        function getTodayCounts() {
+            const counts = {};
+            getTodayRecords().forEach(r => {
+                counts[r.type] = (counts[r.type] || 0) + 1;
+            });
+            return counts;
+        }
+
+        function checkMilestoneMessages(justAddedType) {
+            const c = getTodayCounts();
+            const beers = (c.male_pivo || 0) + (c.velke_pivo || 0);
+            const shots = (c.maly_panak || 0) + (c.velky_panak || 0);
+            const cocktails = c.koktejl || 0;
+            const cigs = c.cigareta || 0;
+            const svaraks = c.svarak || 0;
+            const wines = (c.vino_bile || 0) + (c.vino_cervene || 0);
+
+            if (justAddedType === 'male_pivo' || justAddedType === 'velke_pivo') {
+                if (beers === 3) showToast('Dneska ti to chutná, co?');
+                if (beers === 5) showToast('Napsal jsi domů, že budeš mít zpoždění?', true);
+            }
+            if (justAddedType === 'maly_panak' || justAddedType === 'velky_panak') {
+                if (shots === 2) showToast('Hou, zpomal člověče.', true);
+            }
+            if (justAddedType === 'koktejl' && cocktails === 2) {
+                showToast('Nekombinuj to tolik, zítra se ti to vrátí.', true);
+            }
+            if (justAddedType === 'cigareta' && cigs === 3) {
+                showToast('Zítra tě bude bolet hlava, přibrzdi s kouřením.', true);
+            }
+            if (justAddedType === 'svarak' && svaraks === 3) {
+                showToast('Cukr a teplý alkohol. Zítra bude bolet hlava!', true);
+            }
+            if ((justAddedType === 'vino_bile' || justAddedType === 'vino_cervene') && wines === 6) {
+                showToast('Ses posral, ty hovado?', true);
+            }
+        }
+
+        function addRecord(type, category) {
+            records.push({
+                timestamp: Date.now(),
+                type: type,
+                category: category
+            });
+            localStorage.setItem('consumptionRecords', JSON.stringify(records));
+
+            if (navigator.vibrate) {
+                navigator.vibrate(35);
+            }
+
+            updateUI();
+            checkMilestoneMessages(type);
+        }
+
+        function undoLastTodayRecord() {
+            const todayLogical = getLogicalDateString(Date.now());
+            for (let i = records.length - 1; i >= 0; i--) {
+                if (getLogicalDateString(records[i].timestamp) === todayLogical) {
+                    records.splice(i, 1);
+                    break;
+                }
+            }
+            localStorage.setItem('consumptionRecords', JSON.stringify(records));
+            if (navigator.vibrate) navigator.vibrate(25);
+            updateUI();
+        }
+
+        // --- AKTUALIZACE HLAVNÍ OBRAZOVKY ---
+        function updateUI() {
+            const todayLogical = getLogicalDateString(Date.now());
+            const todayRecs = getTodayRecords();
+            const counts = getTodayCounts();
+
+            // Počet alkoholických drinků v Denní nádobě
+            const alcoholCount = todayRecs.filter(r => r.category === 'alcohol').length;
+            document.getElementById('daily-count').textContent = alcoholCount;
+
+            // Vizuální plnění nádoby
+            let pct = Math.min((alcoholCount / SOFT_DRINK_LIMIT) * 100, 100);
+            const progressEl = document.getElementById('daily-progress');
+            progressEl.style.width = `${pct}%`;
+
+            if (alcoholCount >= 8) {
+                progressEl.classList.remove('bg-white', 'bg-amber-400');
+                progressEl.classList.add('bg-red-500');
+            } else if (alcoholCount >= 5) {
+                progressEl.classList.remove('bg-white', 'bg-red-500');
+                progressEl.classList.add('bg-amber-400');
+            } else {
+                progressEl.classList.remove('bg-amber-400', 'bg-red-500');
+                progressEl.classList.add('bg-white');
+            }
+
+            // Datum logického dne
+            const parts = todayLogical.split('-');
+            document.getElementById('logical-date-label').textContent = `${parts[2]}.${parts[1]}.${parts[0]}`;
+
+            // Tlačítko Zpět
+            const undoBtn = document.getElementById('btn-undo');
+            if (todayRecs.length > 0) {
+                undoBtn.classList.remove('hidden');
+                undoBtn.classList.add('flex');
+            } else {
+                undoBtn.classList.add('hidden');
+                undoBtn.classList.remove('flex');
+            }
+
+            // Aktualizace počitadel (badges) na všech dlaždicích
+            const allTypes = ['male_pivo', 'velke_pivo', 'vino_bile', 'vino_cervene', 'koktejl', 'svarak', 'maly_panak', 'velky_panak', 'cigareta'];
+            allTypes.forEach(t => {
+                const badge = document.getElementById(`badge-${t}`);
+                const val = counts[t] || 0;
+                if (badge) {
+                    if (val > 0) {
+                        badge.textContent = val;
+                        badge.classList.remove('hidden');
+                        badge.classList.add('flex');
+                    } else {
+                        badge.classList.add('hidden');
+                        badge.classList.remove('flex');
+                    }
+                }
+            });
+
+            // Aktualizace odznaku profilu v hlavičce
+            document.getElementById('profile-summary-badge').textContent = `${profile.weight} kg • ${FOOD_LABELS[profile.food] || 'Normální'}`;
+        }
+
+        // --- ZÁCHRANNÝ KRUH: ZDRAVOTNÍ PREDIKCE & AKČNÍ PLÁN ---
+        function calculateWellnessAndPlan() {
+            const c = getTodayCounts();
+            const beers = (c.male_pivo || 0) + (c.velke_pivo || 0);
+            const wines = (c.vino_bile || 0) + (c.vino_cervene || 0);
+            const cocktails = c.koktejl || 0;
+            const svaraks = c.svarak || 0;
+            const smallShots = c.maly_panak || 0;
+            const largeShots = c.velky_panak || 0;
+            const totalShots = smallShots + largeShots;
+            const cigs = c.cigareta || 0;
+
+            const totalAlcoholDrinks = beers + wines + cocktails + svaraks + totalShots;
+
+            // Celkové gramy čistého alkoholu
+            let totalEthanolGrams = 0;
+            Object.entries(c).forEach(([type, count]) => {
+                totalEthanolGrams += (DRINK_ETHANOL_G[type] || 0) * count;
+            });
+
+            // Přizpůsobení tělesné konstituci (Watson TBW vůči referenčnímu profilu 35 let, 66 kg, 176 cm)
+            const refTBW = 40.33;
+            const userTBW = Math.max(20, 2.447 - (0.09156 * profile.age) + (0.1074 * profile.height) + (0.3362 * profile.weight));
+            const bodyScale = refTBW / userTBW;
+            const foodMult = FOOD_RISK_MULTIPLIER[profile.food] || 1.0;
+
+            const hour = new Date().getHours();
+            const isAfterMidnight = hour >= 0 && hour < 5;
+            const isLateEvening = hour >= 22 || isAfterMidnight;
+
+            // Detekce míchání druhů alkoholu
+            const hasBeer = beers > 0;
+            const hasWineOrSvarak = (wines + svaraks) > 0;
+            const hasSpiritsOrCocktail = (totalShots + cocktails) > 0;
+            const activeGroups = [hasBeer, hasWineOrSvarak, hasSpiritsOrCocktail].filter(Boolean).length;
+            const isMixingSpiritsAndWine = hasWineOrSvarak && hasSpiritsOrCocktail;
+            const isHeavyMixing = activeGroups >= 3 || isMixingSpiritsAndWine;
+
+            // 1. PRAVDĚPODOBNOST BOLESTI HLAVY
+            let headache = 5;
+            if (cigs > 0) {
+                headache = Math.max(headache, 82 + Math.min(cigs * 3, 18));
+            }
+            if (beers >= 10) {
+                headache = Math.max(headache, 92);
+            }
+            headache += (totalEthanolGrams / 18) * 11 * bodyScale * foodMult;
+            headache += (smallShots * 7 + largeShots * 14);
+            headache += (svaraks * 9) + (wines * 4);
+            if (isHeavyMixing) headache += 18;
+            headache = Math.min(Math.round(headache), 100);
+
+            // 2. PRAVDĚPODOBNOST NEVOLNOSTI / ŽALUDKU
+            let vomit = 2;
+            if (cigs >= 10) {
+                vomit = Math.max(vomit, 94);
+            } else if (cigs > 0) {
+                vomit += cigs * 4;
+            }
+            if (isMixingSpiritsAndWine) {
+                vomit = Math.max(vomit, 82);
+            } else if (activeGroups >= 2) {
+                vomit += 25;
+            }
+            vomit += (smallShots * 11 + largeShots * 21) * bodyScale * foodMult;
+            vomit += (cocktails * 12 + svaraks * 10) * foodMult;
+            if (totalAlcoholDrinks >= 8) {
+                vomit += (totalAlcoholDrinks - 7) * 8 * bodyScale;
+            }
+            if (profile.food === 'velmi_malo' && totalAlcoholDrinks >= 2) {
+                vomit += 20;
+            }
+            vomit = Math.min(Math.round(vomit), 100);
+
+            // 3. PRAVDĚPODOBNOST ÚNAVY
+            let fatigue = 10;
+            if (beers >= 10) {
+                fatigue = Math.max(fatigue, 92);
+            }
+            fatigue += (totalEthanolGrams / 20) * 10 * bodyScale;
+            fatigue += (smallShots * 7 + largeShots * 13);
+            if (isMixingSpiritsAndWine) fatigue += 30;
+            if (isAfterMidnight) {
+                const hoursPastMidnight = hour + (new Date().getMinutes() / 60);
+                fatigue += Math.round(35 + hoursPastMidnight * 12);
+            } else if (isLateEvening) {
+                fatigue += 15;
+            }
+            fatigue = Math.min(Math.round(fatigue), 100);
+
+            // 4. CELKOVÁ PRAVDĚPODOBNOST, ŽE BUDE BLBĚ
+            let overallSick = Math.round(
+                Math.max(
+                    vomit * 0.95,
+                    headache * 0.9,
+                    (vomit * 0.45 + headache * 0.35 + fatigue * 0.20)
+                )
+            );
+            if (totalAlcoholDrinks === 0 && cigs === 0) overallSick = 0;
+            overallSick = Math.min(overallSick, 100);
+
+            // 5. DOPORUČENÁ VODA PŘED SPANÍM
+            const todayLogical = getLogicalDateString(Date.now());
+            const waterAlreadyDrank = waterLogs[todayLogical] || 0;
+            let rawWaterNeeded = 300 + (totalEthanolGrams * 13) + (cigs * 120);
+            if (profile.food === 'velmi_malo' || profile.food === 'malo') rawWaterNeeded += 200;
+            const totalWaterTarget = Math.round(rawWaterNeeded / 50) * 50;
+            const remainingWater = Math.max(0, totalWaterTarget - waterAlreadyDrank);
+
+            // 6. SESTAVENÍ AKČNÍHO PLÁNU ("Co dělat, aby mi bylo dobře")
+            const actions = [];
+
+            if (totalAlcoholDrinks === 0 && cigs === 0) {
+                actions.push({
+                    icon: 'check',
+                    color: 'text-emerald-400 bg-emerald-500/15',
+                    title: 'Čistý štít',
+                    desc: 'Zatím bez alkoholu i cigaret. Pokud se chystáš pít, drž se jednoho druhu pití a nekuř.'
+                });
+            } else {
+                if (isHeavyMixing) {
+                    actions.push({
+                        icon: 'triangle-alert',
+                        color: 'text-red-400 bg-red-500/15',
+                        title: 'Okamžitě přestaň míchat',
+                        desc: 'Kombinuješ různé druhy alkoholu. Dej si teď pauzu aspoň 45 minut a pij jen čistou vodu.'
+                    });
+                } else if (totalAlcoholDrinks >= 4) {
+                    actions.push({
+                        icon: 'shield-alert',
+                        color: 'text-amber-400 bg-amber-500/15',
+                        title: 'Zůstaň u jednoho druhu',
+                        desc: 'Už neměň typ pití ani nepřidávej panáky. Každý další drink prokládej sklenicí vody.'
+                    });
+                }
+
+                if (profile.food === 'velmi_malo' || profile.food === 'malo' || totalShots > 0 || wines >= 3) {
+                    actions.push({
+                        icon: 'utensils',
+                        color: 'text-amber-400 bg-amber-500/15',
+                        title: 'Něco lehkého sněz před spaním',
+                        desc: 'Máš slabší základ v žaludku nebo kyselé/tvrdé pití. Pomůže kousek pečiva, banán, vývar nebo vajíčko.'
+                    });
+                }
+
+                if (totalEthanolGrams >= 35 || beers >= 3) {
+                    actions.push({
+                        icon: 'droplets',
+                        color: 'text-blue-400 bg-blue-500/15',
+                        title: 'Doplň minerály (hořčík a sodík)',
+                        desc: 'Alkohol vyplavuje minerály. Ideální je Magnesia, iontový nápoj nebo voda se špetkou soli a citronem.'
+                    });
+                }
+
+                if (cigs > 0) {
+                    actions.push({
+                        icon: 'wind',
+                        color: 'text-red-400 bg-red-500/15',
+                        title: 'Vyvětrej a už nezapaluj',
+                        desc: `Máš za sebou ${cigs} ${cigs === 1 ? 'cigaretu' : (cigs < 5 ? 'cigarety' : 'cigaret')}. Nikotin stahuje cévy v hlavě – dej si čerstvý vzduch a sklenici vody navíc.`
+                    });
+                }
+
+                if (isAfterMidnight) {
+                    actions.push({
+                        icon: 'moon',
+                        color: 'text-purple-400 bg-purple-500/15',
+                        title: 'Jdi spát v chladné vyvětrané místnosti',
+                        desc: 'Je po půlnoci a tělo potřebuje regenerovat. Vyvětrej ložnici a připrav si vodu rovnou k posteli.'
+                    });
+                }
+            }
+
+            return {
+                overallSick,
+                headache,
+                vomit,
+                fatigue,
+                remainingWater,
+                waterAlreadyDrank,
+                actions
+            };
+        }
+
+        function renderLifebuoyModal() {
+            const data = calculateWellnessAndPlan();
+
+            const overallEl = document.getElementById('pred-overall-sick');
+            const pillEl = document.getElementById('sick-status-pill');
+            const summaryEl = document.getElementById('pred-summary-text');
+
+            overallEl.textContent = `${data.overallSick} %`;
+
+            if (data.overallSick >= 75) {
+                overallEl.className = 'text-4xl font-extrabold text-red-500';
+                pillEl.className = 'text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-red-500/20 text-red-400';
+                pillEl.textContent = 'Kritické riziko';
+                summaryEl.textContent = 'Zítra to bude bolet. Teď už nepij alkohol, doplň vodu, něco malého sněz a jdi se vyspat.';
+            } else if (data.overallSick >= 45) {
+                overallEl.className = 'text-4xl font-extrabold text-amber-400';
+                pillEl.className = 'text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300';
+                pillEl.textContent = 'Zvýšené riziko';
+                summaryEl.textContent = 'Jsi na hraně. Když teď zpomalíš a splníš kroky níže, zítřek ještě zachráníš.';
+            } else if (data.overallSick >= 20) {
+                overallEl.className = 'text-4xl font-extrabold text-white';
+                pillEl.className = 'text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-blue-500/20 text-blue-300';
+                pillEl.textContent = 'Mírná zátěž';
+                summaryEl.textContent = 'Tělo to zatím zvládá dobře. Stačí nezačít míchat a před spaním se napít vody.';
+            } else {
+                overallEl.className = 'text-4xl font-extrabold text-emerald-400';
+                pillEl.className = 'text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400';
+                pillEl.textContent = 'V pohodě';
+                summaryEl.textContent = 'Minimální riziko nevolnosti. Ráno budeš fit.';
+            }
+
+            const colorizeMetric = (el, val) => {
+                el.textContent = `${val} %`;
+                if (val >= 70) el.className = 'text-base font-bold text-red-400';
+                else if (val >= 40) el.className = 'text-base font-bold text-amber-400';
+                else el.className = 'text-base font-bold text-white';
+            };
+            colorizeMetric(document.getElementById('pred-headache'), data.headache);
+            colorizeMetric(document.getElementById('pred-vomit'), data.vomit);
+            colorizeMetric(document.getElementById('pred-fatigue'), data.fatigue);
+
+            document.getElementById('pred-water').textContent = data.remainingWater > 0 
+                ? `${data.remainingWater} ml vody` 
+                : 'Splněno! (0 ml zbývá)';
+            document.getElementById('water-logged-note').textContent = `Dnes zapsáno ${data.waterAlreadyDrank} ml vody`;
+
+            const listEl = document.getElementById('rescue-actions-list');
+            listEl.innerHTML = data.actions.map(act => `
+                <div class="bg-zinc-900 border border-zinc-800/90 rounded-2xl p-3.5 flex items-start gap-3">
+                    <div class="p-2 rounded-xl ${act.color} shrink-0 mt-0.5">
+                        <i data-lucide="${act.icon}" class="w-4 h-4"></i>
+                    </div>
+                    <div>
+                        <div class="text-sm font-bold text-white">${act.title}</div>
+                        <div class="text-xs text-zinc-400 mt-0.5 leading-relaxed">${act.desc}</div>
+                    </div>
+                </div>
+            `).join('');
+
+            lucide.createIcons();
+        }
+
+        // --- OVLÁDÁNÍ MODÁLNÍCH OKEN ---
+        function openSheetModal(overlayId, sheetId) {
+            const overlay = document.getElementById(overlayId);
+            const sheet = document.getElementById(sheetId);
+            overlay.classList.remove('opacity-0', 'pointer-events-none');
+            requestAnimationFrame(() => {
+                sheet.classList.remove('translate-y-full');
+            });
+        }
+
+        function closeSheetModal(overlayId, sheetId) {
+            const overlay = document.getElementById(overlayId);
+            const sheet = document.getElementById(sheetId);
+            sheet.classList.add('translate-y-full');
+            setTimeout(() => {
+                overlay.classList.add('opacity-0', 'pointer-events-none');
+            }, 220);
+        }
+
+        document.getElementById('btn-open-lifebuoy').addEventListener('click', () => {
+            renderLifebuoyModal();
+            openSheetModal('lifebuoy-modal', 'lifebuoy-sheet');
+        });
+        document.getElementById('btn-close-lifebuoy').addEventListener('click', () => {
+            closeSheetModal('lifebuoy-modal', 'lifebuoy-sheet');
+        });
+        document.getElementById('lifebuoy-modal').addEventListener('click', (e) => {
+            if (e.target.id === 'lifebuoy-modal') closeSheetModal('lifebuoy-modal', 'lifebuoy-sheet');
+        });
+
+        document.getElementById('btn-drink-water').addEventListener('click', () => {
+            const todayLogical = getLogicalDateString(Date.now());
+            waterLogs[todayLogical] = (waterLogs[todayLogical] || 0) + 250;
+            localStorage.setItem('waterLogsByDay', JSON.stringify(waterLogs));
+            if (navigator.vibrate) navigator.vibrate(30);
+            renderLifebuoyModal();
+        });
+
+        document.getElementById('btn-open-profile').addEventListener('click', () => {
+            document.getElementById('prof-food').value = profile.food;
+            document.getElementById('prof-age').value = profile.age;
+            document.getElementById('prof-weight').value = profile.weight;
+            document.getElementById('prof-height').value = profile.height;
+            openSheetModal('profile-modal', 'profile-sheet');
+        });
+        document.getElementById('btn-close-profile').addEventListener('click', () => {
+            closeSheetModal('profile-modal', 'profile-sheet');
+        });
+        document.getElementById('profile-modal').addEventListener('click', (e) => {
+            if (e.target.id === 'profile-modal') closeSheetModal('profile-modal', 'profile-sheet');
+        });
+        document.getElementById('btn-save-profile').addEventListener('click', () => {
+            profile = {
+                food: document.getElementById('prof-food').value,
+                age: Math.max(18, parseInt(document.getElementById('prof-age').value, 10) || 35),
+                weight: Math.max(35, parseInt(document.getElementById('prof-weight').value, 10) || 66),
+                height: Math.max(120, parseInt(document.getElementById('prof-height').value, 10) || 176)
+            };
+            localStorage.setItem('userDrinkProfile', JSON.stringify(profile));
+            updateUI();
+            closeSheetModal('profile-modal', 'profile-sheet');
+            showToast('Profil a stupeň najezení uloženy.');
+        });
+
+        document.querySelectorAll('.track-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                addRecord(btn.getAttribute('data-type'), btn.getAttribute('data-category'));
+            });
+        });
+        document.getElementById('btn-undo').addEventListener('click', undoLastTodayRecord);
+
+        // --- STATISTIKY A SPOJNICOVÝ GRAF ---
+        function getChartData(period) {
+            const grouped = {};
+            records.forEach(r => {
+                if (r.category !== 'alcohol') return;
+                const dStr = getLogicalDateString(r.timestamp);
+                const key = period === 'week' ? getWeekString(dStr) : getMonthString(dStr);
+                grouped[key] = (grouped[key] || 0) + 1;
+            });
+
+            const sortedKeys = Object.keys(grouped).sort();
+            return {
+                labels: sortedKeys,
+                values: sortedKeys.map(k => grouped[k])
+            };
+        }
+
+        function renderChart() {
+            const data = getChartData(currentChartPeriod);
+            const ctx = document.getElementById('statsChart').getContext('2d');
+
+            if (chartInstance) {
+                chartInstance.destroy();
+            }
+
+            chartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: data.labels.length ? data.labels : ['Zatím bez dat'],
+                    datasets: [{
+                        label: 'Počet drinků',
+                        data: data.values.length ? data.values : [0],
+                        borderColor: '#ffffff',
+                        backgroundColor: 'rgba(255, 255, 255, 0.08)',
+                        borderWidth: 2.5,
+                        pointBackgroundColor: '#ffffff',
+                        pointBorderColor: '#000000',
+                        pointBorderWidth: 2,
+                        pointRadius: 4,
+                        tension: 0.35,
+                        fill: true
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            grid: { color: '#27272a' },
+                            ticks: { color: '#a1a1aa', precision: 0 }
+                        },
+                        x: {
+                            grid: { display: false },
+                            ticks: { color: '#a1a1aa', maxRotation: 45, minRotation: 0 }
+                        }
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            backgroundColor: '#18181b',
+                            titleColor: '#ffffff',
+                            bodyColor: '#d4d4d8',
+                            borderColor: '#3f3f46',
+                            borderWidth: 1,
+                            padding: 10,
+                            displayColors: false
+                        }
+                    }
+                }
+            });
+        }
+
+        const statsModal = document.getElementById('stats-modal');
+        const btnViewWeeks = document.getElementById('btn-view-weeks');
+        const btnViewMonths = document.getElementById('btn-view-months');
+
+        document.getElementById('btn-open-stats').addEventListener('click', () => {
+            statsModal.classList.remove('translate-y-full');
+            document.getElementById('reset-confirm-box').classList.add('hidden');
+            renderChart();
+        });
+
+        document.getElementById('btn-close-stats').addEventListener('click', () => {
+            statsModal.classList.add('translate-y-full');
+        });
+
+        function switchChartPeriod(period) {
+            currentChartPeriod = period;
+            if (period === 'week') {
+                btnViewWeeks.classList.add('bg-zinc-700', 'text-white', 'shadow-sm');
+                btnViewWeeks.classList.remove('text-zinc-400');
+                btnViewMonths.classList.remove('bg-zinc-700', 'text-white', 'shadow-sm');
+                btnViewMonths.classList.add('text-zinc-400');
+            } else {
+                btnViewMonths.classList.add('bg-zinc-700', 'text-white', 'shadow-sm');
+                btnViewMonths.classList.remove('text-zinc-400');
+                btnViewWeeks.classList.remove('bg-zinc-700', 'text-white', 'shadow-sm');
+                btnViewWeeks.classList.add('text-zinc-400');
+            }
+            renderChart();
+        }
+
+        btnViewWeeks.addEventListener('click', () => switchChartPeriod('week'));
+        btnViewMonths.addEventListener('click', () => switchChartPeriod('month'));
+
+        document.getElementById('btn-reset-today-prompt').addEventListener('click', () => {
+            document.getElementById('reset-confirm-box').classList.remove('hidden');
+        });
+        document.getElementById('btn-reset-cancel').addEventListener('click', () => {
+            document.getElementById('reset-confirm-box').classList.add('hidden');
+        });
+        document.getElementById('btn-reset-confirm').addEventListener('click', () => {
+            const todayLogical = getLogicalDateString(Date.now());
+            records = records.filter(r => getLogicalDateString(r.timestamp) !== todayLogical);
+            delete waterLogs[todayLogical];
+            localStorage.setItem('consumptionRecords', JSON.stringify(records));
+            localStorage.setItem('waterLogsByDay', JSON.stringify(waterLogs));
+            document.getElementById('reset-confirm-box').classList.add('hidden');
+            updateUI();
+            renderChart();
+            showToast('Dnešní záznamy byly vynulovány.');
+        });
+
+        // Inicializace při spuštění
+        updateUI();
+    </script>
+</body>
+</html>
